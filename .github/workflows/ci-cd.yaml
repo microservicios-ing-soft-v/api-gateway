@@ -1,0 +1,77 @@
+name: Build, Push & Deploy Service
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  ACR_NAME: ${{ secrets.ACR_NAME }}
+  KEY_VAULT_NAME: ${{ secrets.KEY_VAULT_NAME }}
+  VM_USER: ${{ secrets.VM_ADMIN_USERNAME }}
+  VM_PASSWORD: ${{ secrets.VM_ADMIN_PASSWORD }}
+  SERVICE_NAME: 'api-gateway'
+  INFRA_REPO_FOLDER: 'infrastructure'
+
+jobs:
+  build_push_deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Azure Login (for ACR & Key Vault)
+        uses: azure/login@v1
+        with:
+          creds: |
+            {
+              "clientId": "${{ env.AZURE_CLIENT_ID }}",
+              "clientSecret": "${{ env.AZURE_CLIENT_SECRET }}",
+              "tenantId": "${{ env.AZURE_TENANT_ID }}",
+              "subscriptionId": "${{ env.AZURE_SUBSCRIPTION_ID }}"
+            }
+
+      - name: Get VM Public IP from Azure Key Vault
+        id: get_vm_ip
+        run: |
+          VM_PUBLIC_IP=$(az keyvault secret show --vault-name ${{ env.KEY_VAULT_NAME }} --name vm-public-ip --query value -o tsv)
+          echo "VM_HOST=$VM_PUBLIC_IP" >> $GITHUB_ENV
+        env:
+          AZURE_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ env.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Docker Login to ACR
+        run: docker login ${{ env.ACR_NAME }}.azurecr.io --username ${{ env.AZURE_CLIENT_ID }} --password ${{ env.AZURE_CLIENT_SECRET }}
+
+      - name: Build Docker Image
+        run: docker build . -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.SERVICE_NAME }}:${{ github.sha }}
+
+      - name: Push Docker Image to ACR
+        run: docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.SERVICE_NAME }}:${{ github.sha }}
+
+      - name: Azure Logout (cleanup Azure CLI creds)
+        run: az logout
+
+      - name: Deploy Service on VM via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ env.VM_HOST }}
+          username: ${{ env.VM_USER }}
+          password: ${{ env.VM_PASSWORD }}
+          script: |
+            set -eux
+            az login --identity
+            az acr login --name ${{ env.ACR_NAME }}
+            cd /home/${{ env.VM_USER }}/${{ env.INFRA_REPO_FOLDER }}/docker-compose/prod
+            export IMAGE_REGISTRY="${{ env.ACR_NAME }}.azurecr.io"
+            export IMAGE_TAG="${{ github.sha }}"
+            docker compose pull ${{ env.SERVICE_NAME }}
+            docker compose up -d ${{ env.SERVICE_NAME }}
