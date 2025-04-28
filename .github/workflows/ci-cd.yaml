@@ -14,7 +14,7 @@ env:
   ACR_NAME: ${{ secrets.ACR_NAME }}
   KEY_VAULT_NAME: ${{ secrets.KEY_VAULT_NAME }}
   RESOURCE_GROUP_NAME: ${{ secrets.RESOURCE_GROUP_NAME }}
-  CONTAINERAPPS_ENVIRONMENT: ${{ secrets.CONTAINERAPPS_ENVIRONMENT }} # 👈 agregado
+  CONTAINERAPPS_ENVIRONMENT: ${{ secrets.CONTAINERAPPS_ENVIRONMENT }}
   SERVICE_NAME: 'api-gateway'
 
 jobs:
@@ -56,6 +56,36 @@ jobs:
           tags: ${{ env.ACR_LOGIN_SERVER }}/${{ env.SERVICE_NAME }}:${{ github.sha }},${{ env.ACR_LOGIN_SERVER }}/${{ env.SERVICE_NAME }}:latest
           context: .
 
+      - name: Get Auth API URL
+        id: get_auth_url
+        run: |
+          AUTH_API_FQDN=$(az containerapp show --name auth-api --resource-group ${{ env.RESOURCE_GROUP_NAME }} --query properties.configuration.ingress.fqdn -o tsv || echo "")
+          if [ -z "$AUTH_API_FQDN" ]; then
+            echo "Auth API FQDN not found. Using default Container Apps URL pattern."
+            AUTH_API_FQDN="auth-api.${CONTAINERAPPS_ENVIRONMENT_DEFAULT_DOMAIN}"
+          fi
+          echo "AUTH_API_URL=https://$AUTH_API_FQDN" >> $GITHUB_ENV
+
+      - name: Get Todos API URL
+        id: get_todos_url
+        run: |
+          TODOS_API_FQDN=$(az containerapp show --name todos-api --resource-group ${{ env.RESOURCE_GROUP_NAME }} --query properties.configuration.ingress.fqdn -o tsv || echo "")
+          if [ -z "$TODOS_API_FQDN" ]; then
+            echo "Todos API FQDN not found. Using default Container Apps URL pattern."
+            TODOS_API_FQDN="todos-api.${CONTAINERAPPS_ENVIRONMENT_DEFAULT_DOMAIN}"
+          fi
+          echo "TODOS_API_URL=https://$TODOS_API_FQDN" >> $GITHUB_ENV
+
+      - name: Get Zipkin URL
+        id: get_zipkin_url
+        run: |
+          ZIPKIN_FQDN=$(az containerapp show --name zipkin --resource-group ${{ env.RESOURCE_GROUP_NAME }} --query properties.configuration.ingress.fqdn -o tsv || echo "")
+          if [ -z "$ZIPKIN_FQDN" ]; then
+            echo "Zipkin FQDN not found. Using default Container Apps URL pattern."
+            ZIPKIN_FQDN="zipkin.${CONTAINERAPPS_ENVIRONMENT_DEFAULT_DOMAIN}"
+          fi
+          echo "ZIPKIN_URL=https://$ZIPKIN_FQDN/api/v2/spans" >> $GITHUB_ENV
+
       - name: Create or Update Container App
         run: |
           if az containerapp show --name ${{ env.SERVICE_NAME }} --resource-group ${{ env.RESOURCE_GROUP_NAME }} &>/dev/null; then
@@ -63,7 +93,11 @@ jobs:
             az containerapp update \
               --name ${{ env.SERVICE_NAME }} \
               --resource-group ${{ env.RESOURCE_GROUP_NAME }} \
-              --image ${{ env.ACR_LOGIN_SERVER }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+              --image ${{ env.ACR_LOGIN_SERVER }}/${{ env.SERVICE_NAME }}:${{ github.sha }} \
+              --set-env-vars \
+                  AUTH_API_ADDRESS=${{ env.AUTH_API_URL }} \
+                  TODOS_API_ADDRESS=${{ env.TODOS_API_URL }} \
+                  ZIPKIN_URL=${{ env.ZIPKIN_URL }}
           else
             echo "Container App ${{ env.SERVICE_NAME }} does not exist, creating..."
             az containerapp create \
@@ -73,7 +107,13 @@ jobs:
               --image ${{ env.ACR_LOGIN_SERVER }}/${{ env.SERVICE_NAME }}:${{ github.sha }} \
               --registry-server ${{ env.ACR_LOGIN_SERVER }} \
               --registry-username ${{ env.AZURE_CLIENT_ID }} \
-              --registry-password ${{ env.AZURE_CLIENT_SECRET }}
+              --registry-password ${{ env.AZURE_CLIENT_SECRET }} \
+              --env-vars \
+                  AUTH_API_ADDRESS=${{ env.AUTH_API_URL }} \
+                  TODOS_API_ADDRESS=${{ env.TODOS_API_URL }} \
+                  ZIPKIN_URL=${{ env.ZIPKIN_URL }} \
+              --ingress external \
+              --target-port 8090
           fi
 
       - name: Azure Logout
