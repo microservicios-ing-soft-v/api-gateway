@@ -137,7 +137,7 @@ app.use((req, res, next) => {
 
 app.use('/todos', async (req, res, next) => {
   const todosApiUrl = process.env.TODOS_API_ADDRESS || 'http://todos-api:8082';
-  const targetPath = req.path.replace(/^\/todos/, '/');
+  const targetPath = req.path.replace(/^\/todos(\/todos)?/, '/');
   const fullUrl = `${todosApiUrl}${targetPath}`;
   
   const requestConfig = {
