@@ -8,6 +8,8 @@
   },
   "dependencies": {
     "express": "^4.18.2",
-    "morgan": "^1.10.0"
+    "morgan": "^1.10.0",
+    "axios": "^1.6.2",
+    "opossum": "^8.1.2"
   }
 }
