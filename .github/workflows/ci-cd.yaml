@@ -14,6 +14,7 @@ env:
   ACR_NAME: ${{ secrets.ACR_NAME }}
   KEY_VAULT_NAME: ${{ secrets.KEY_VAULT_NAME }}
   RESOURCE_GROUP_NAME: ${{ secrets.RESOURCE_GROUP_NAME }}
+  CONTAINERAPPS_ENVIRONMENT: ${{ secrets.CONTAINERAPPS_ENVIRONMENT }} # 👈 agregado
   SERVICE_NAME: 'api-gateway'
 
 jobs:
@@ -55,12 +56,25 @@ jobs:
           tags: ${{ env.ACR_LOGIN_SERVER }}/${{ env.SERVICE_NAME }}:${{ github.sha }},${{ env.ACR_LOGIN_SERVER }}/${{ env.SERVICE_NAME }}:latest
           context: .
 
-      - name: Update Container App
+      - name: Create or Update Container App
         run: |
-          az containerapp update \
-            --name ${{ env.SERVICE_NAME }} \
-            --resource-group ${{ env.RESOURCE_GROUP_NAME }} \
-            --image ${{ env.ACR_LOGIN_SERVER }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+          if az containerapp show --name ${{ env.SERVICE_NAME }} --resource-group ${{ env.RESOURCE_GROUP_NAME }} &>/dev/null; then
+            echo "Container App ${{ env.SERVICE_NAME }} exists, updating..."
+            az containerapp update \
+              --name ${{ env.SERVICE_NAME }} \
+              --resource-group ${{ env.RESOURCE_GROUP_NAME }} \
+              --image ${{ env.ACR_LOGIN_SERVER }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+          else
+            echo "Container App ${{ env.SERVICE_NAME }} does not exist, creating..."
+            az containerapp create \
+              --name ${{ env.SERVICE_NAME }} \
+              --resource-group ${{ env.RESOURCE_GROUP_NAME }} \
+              --environment ${{ env.CONTAINERAPPS_ENVIRONMENT }} \
+              --image ${{ env.ACR_LOGIN_SERVER }}/${{ env.SERVICE_NAME }}:${{ github.sha }} \
+              --registry-server ${{ env.ACR_LOGIN_SERVER }} \
+              --registry-username ${{ env.AZURE_CLIENT_ID }} \
+              --registry-password ${{ env.AZURE_CLIENT_SECRET }}
+          fi
 
       - name: Azure Logout
         run: az logout
